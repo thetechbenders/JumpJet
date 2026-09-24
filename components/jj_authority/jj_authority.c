@@ -443,6 +443,7 @@ void jj_authority_apply_to_inputs(
 
 jj_outputs_t jj_authority_control_step(
     jj_authority_t *state,
+    jj_controller_t *controller,
     const jj_inputs_t *authoritative_inputs,
     uint64_t now_ms,
     jj_control_snapshot_t *out)
@@ -454,7 +455,16 @@ jj_outputs_t jj_authority_control_step(
     AUTHORITY_LOCK();
     (void)lease_expire_unlocked(state, now_ms);
     jj_authority_apply_to_inputs(&state->state, &input);
-    const jj_outputs_t output = jj_interlock_step(state->interlock, &input);
+    /*
+     * Both interlock stages and the controller step run under this one lock,
+     * so no authority mutation or revocation can interleave between them.
+     */
+    const jj_eligibility_t eligibility =
+        jj_interlock_evaluate(state->interlock, &input);
+    const jj_controller_result_t controller_result =
+        jj_controller_step(controller, &eligibility, &input);
+    const jj_outputs_t output = jj_interlock_authorize(
+        state->interlock, controller ? &controller_result.report : NULL);
     snapshot_unlocked(state, now_ms, out);
     AUTHORITY_UNLOCK();
     return output;

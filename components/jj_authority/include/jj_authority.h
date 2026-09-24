@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "jj_control.h"
 #include "jj_interlock.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -119,8 +120,13 @@ void jj_authority_snapshot(
 void jj_authority_apply_to_inputs(
     const jj_control_snapshot_t *authority,
     jj_inputs_t *inputs);
+/*
+ * One ordered control step under the authority lock: authority -> interlock
+ * Stage 1 -> controller -> interlock Stage 2. A NULL controller fails cold.
+ */
 jj_outputs_t jj_authority_control_step(
     jj_authority_t *state,
+    jj_controller_t *controller,
     const jj_inputs_t *authoritative_inputs,
     uint64_t now_ms,
     jj_control_snapshot_t *out);

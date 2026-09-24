@@ -6,6 +6,7 @@
 #include "dc_prusa.h"
 #include "dc_wifi.h"
 #include "jj_authority.h"
+#include "jj_control.h"
 #include "jj_identity.h"
 #include "jj_interlock.h"
 #include "jj_portal.h"
@@ -21,6 +22,7 @@
 static const char *TAG = JJ_IDENTITY_PRODUCT_ID;
 static jj_interlock_t s_interlock;
 static jj_authority_t s_authority;
+static jj_controller_t s_controller;
 
 static bool printer_is_printing(const char *state)
 {
@@ -48,7 +50,7 @@ static void control_task(void *arg)
          */
         const uint64_t now_ms = (uint64_t)esp_timer_get_time() / 1000U;
         const jj_outputs_t output = jj_authority_control_step(
-            &s_authority, &input, now_ms, NULL);
+            &s_authority, &s_controller, &input, now_ms, NULL);
         if (!startup_reported) {
             startup_reported = true;
             xTaskNotifyGive(startup_task);
@@ -75,6 +77,9 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
     jj_interlock_init(&s_interlock);
     jj_authority_init(&s_authority, &s_interlock, JJ_REMOTE_LEASE_TTL_MS);
+    const jj_controller_config_t controller_config =
+        jj_controller_provisional_config();
+    jj_controller_init(&s_controller, &controller_config);
     BaseType_t created = xTaskCreate(control_task, "jj_control", 4096,
                                      xTaskGetCurrentTaskHandle(), 8, NULL);
     ESP_ERROR_CHECK(created == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
@@ -91,7 +96,8 @@ void app_main(void)
     ESP_ERROR_CHECK(ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000)) > 0 ?
                     ESP_OK : ESP_ERR_TIMEOUT);
     const jj_outputs_t startup_output = jj_interlock_snapshot(&s_interlock);
-    ESP_ERROR_CHECK(!startup_output.heater_requested &&
+    ESP_ERROR_CHECK(!startup_output.heater_authorized &&
+                    startup_output.allowed_duty_pct == 0.0f &&
                     startup_output.effective_target_c == 0.0f ?
                     ESP_OK : ESP_ERR_INVALID_STATE);
     const esp_partition_t *running = esp_ota_get_running_partition();
