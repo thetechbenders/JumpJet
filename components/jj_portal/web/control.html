@@ -32,8 +32,11 @@
     <dl>
       <dt>Configured target</dt><dd id="configured">—</dd>
       <dt>Effective target</dt><dd id="effective">—</dd>
+      <dt>Controller</dt><dd id="controller">—</dd>
       <dt>Heater request</dt><dd id="requested">—</dd>
+      <dt>Requested duty</dt><dd id="requested_duty">—</dd>
       <dt>Heater allowed</dt><dd id="allowed">—</dd>
+      <dt>Allowed duty</dt><dd id="allowed_duty">—</dd>
       <dt>Heater delivered</dt><dd id="delivered">—</dd>
       <dt>Thermal handling</dt><dd id="thermal">—</dd>
       <dt>Health / fault</dt><dd id="health">—</dd>
@@ -83,8 +86,13 @@
         state.dominant_constraint);
       $("configured").textContent = state.configured_target_c + " °C";
       $("effective").textContent = state.effective_target_c == null ? "—" : state.effective_target_c + " °C";
+      const heater = JumpJetControl.heaterPresentation(state.heater);
+      $("controller").textContent = heater.controllerText;
+      $("controller").className = heater.controllerClass;
       $("requested").textContent = state.heater.requested ? "On" : "Off";
+      $("requested_duty").textContent = heater.requestedDuty;
       $("allowed").textContent = state.heater.allowed ? "On" : "Off";
+      $("allowed_duty").textContent = heater.allowedDuty;
       $("delivered").textContent = state.heater.delivered ? "On" : "Off";
       $("thermal").textContent = cap(state.thermal_state);
       $("health").textContent = state.safety.fault_latched ? "Fault: " + state.safety.fault : state.safety.health;

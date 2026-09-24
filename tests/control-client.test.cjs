@@ -10,6 +10,7 @@ const {
   ControlError,
   controllerLabel,
   constraintMessage,
+  heaterPresentation,
   mutationErrorMessage,
 } = require("../components/jj_portal/web/control-client.js");
 
@@ -182,4 +183,77 @@ test("primary constraints are operator-readable while unknown codes stay generic
                "Heating unavailable: product not commissioned");
   assert.equal(constraintMessage("future_internal_code"),
                "Heating inhibited: see advanced diagnostics");
+});
+
+test("controller-state constraints have operator-readable messages", () => {
+  assert.equal(constraintMessage("controller_invalid"),
+               "Heating inhibited: controller could not produce a valid request");
+  assert.equal(constraintMessage("control_sequence_invalid"),
+               "Heating inhibited: control evaluation was out of sequence");
+});
+
+test("idle controller renders as an ordinary inactive state", () => {
+  const view = heaterPresentation({control_loop: "idle",
+    requested_duty_percent: 0, allowed_duty_percent: 0});
+  assert.equal(view.controllerText, "Idle");
+  assert.equal(view.controllerClass, "");
+  assert.equal(view.requestedDuty, "0.0 %");
+  assert.equal(view.allowedDuty, "0.0 %");
+});
+
+test("valid controller renders normally with requested and allowed duty", () => {
+  const view = heaterPresentation({control_loop: "valid", allowed: true,
+    requested_duty_percent: 37.5, allowed_duty_percent: 37.5});
+  assert.equal(view.controllerText, "Running");
+  assert.equal(view.controllerClass, "");
+  assert.equal(view.requestedDuty, "37.5 %");
+  assert.equal(view.allowedDuty, "37.5 %");
+});
+
+test("invalid controller renders as a distinct failure", () => {
+  const view = heaterPresentation({control_loop: "invalid", allowed: false,
+    requested_duty_percent: 0, allowed_duty_percent: 0});
+  assert.equal(view.controllerText, "Invalid: controller failure");
+  assert.equal(view.controllerClass, "fault");
+  assert.notEqual(view.controllerClass, heaterPresentation({control_loop: "idle"}).controllerClass);
+});
+
+test("HOLD with an invalid controller still exposes INVALID", () => {
+  const holdInvalid = {dominant_constraint: "fan_proof_pending",
+    heater: {control_loop: "invalid", allowed: false,
+             requested_duty_percent: 0, allowed_duty_percent: 0}};
+  assert.equal(constraintMessage(holdInvalid.dominant_constraint),
+               "Heating inhibited: airflow is not proven");
+  const view = heaterPresentation(holdInvalid.heater);
+  assert.equal(view.controllerText, "Invalid: controller failure");
+  assert.equal(view.controllerClass, "fault");
+});
+
+test("HOLD request stays visible while allowed duty is zero", () => {
+  const view = heaterPresentation({control_loop: "valid", allowed: false,
+    requested_duty_percent: 42, allowed_duty_percent: 0});
+  assert.equal(view.requestedDuty, "42.0 %");
+  assert.equal(view.allowedDuty, "0.0 %");
+});
+
+test("missing or unknown controller data never renders as healthy", () => {
+  for (const heater of [undefined, {}, {control_loop: "future"},
+                        {control_loop: "valid", requested_duty_percent: NaN}]) {
+    const view = heaterPresentation(heater);
+    if (!heater || heater.control_loop !== "valid") {
+      assert.equal(view.controllerText, "Unknown");
+      assert.equal(view.controllerClass, "inhibit");
+    }
+    if (!heater || !Number.isFinite(heater.requested_duty_percent))
+      assert.equal(view.requestedDuty, "—");
+  }
+});
+
+test("primary panel wires controller state and both duties", () => {
+  const page = fs.readFileSync(path.join(
+    __dirname, "../components/jj_portal/web/control.html"), "utf8");
+  for (const id of ["controller", "requested_duty", "allowed_duty"])
+    assert.match(page, new RegExp(`<dd id="${id}">`));
+  assert.match(page, /JumpJetControl\.heaterPresentation\(state\.heater\)/);
+  assert.match(page, /\$\("controller"\)\.className = heater\.controllerClass/);
 });

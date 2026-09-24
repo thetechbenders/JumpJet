@@ -1,5 +1,6 @@
 #include "jj_interlock.h"
 #include <math.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -488,6 +489,111 @@ static void test_stage_two_consumes_only_its_own_stage_one(void)
     CHECK(jj_interlock_snapshot(&state).allowed_duty_pct == 0.0f);
 }
 
+
+/*
+ * Mirrors jj_portal's thermal_state_guard(): "unauthorized" alone is not
+ * "thermally safe for OTA". check_ota_contract.sh pins the portal expression.
+ */
+static bool ota_guard_allows(jj_outputs_t output)
+{
+    return !output.heater_authorized && !output.thermal_management_required;
+}
+
+/* Run one authorized cycle, then Stage 1 only; return the window snapshot. */
+static jj_outputs_t window_after_heating(jj_interlock_t *state,
+                                         const jj_inputs_t *next)
+{
+    jj_interlock_init(state);
+    const jj_inputs_t heating = nominal(JJ_MODE_MANUAL);
+    CHECK(cycle(state, &heating).heater_authorized);
+    CHECK(!ota_guard_allows(jj_interlock_snapshot(state)));
+    (void)jj_interlock_evaluate(state, next);
+    return jj_interlock_snapshot(state);
+}
+
+static void test_stage_one_window_keeps_ota_blocked(void)
+{
+    jj_interlock_t state;
+
+    /* A: still heating-eligible; Stage 1 withdraws authorization only. */
+    jj_inputs_t input = nominal(JJ_MODE_MANUAL);
+    jj_outputs_t window = window_after_heating(&state, &input);
+    CHECK(!window.heater_authorized);
+    CHECK(window.allowed_duty_pct == 0.0f);
+    CHECK(window.thermal_management_required);
+    CHECK(!ota_guard_allows(window));
+
+    /* B: cooldown required going into Stage 1, in any mode. */
+    const jj_mode_t modes[] = {JJ_MODE_MANUAL, JJ_MODE_OFF, JJ_MODE_AUTOMATIC};
+    for (size_t m = 0; m < 3; ++m) {
+        input = nominal(modes[m]);
+        input.cooldown_required = true;
+        window = window_after_heating(&state, &input);
+        CHECK(!window.heater_authorized);
+        CHECK(window.thermal_management_required);
+        CHECK(!ota_guard_allows(window));
+    }
+
+    /* C: a fault requiring thermal management going into Stage 1. */
+    for (size_t m = 0; m < 3; ++m) {
+        input = nominal(modes[m]);
+        input.fault_requires_thermal_management = true;
+        window = window_after_heating(&state, &input);
+        CHECK(!window.heater_authorized);
+        CHECK(window.thermal_management_required);
+        CHECK(!ota_guard_allows(window));
+    }
+}
+
+static void test_stage_one_and_two_agree_on_thermal_management(void)
+{
+    /*
+     * D: Stage 2 may change authorization but never the thermal-management
+     * condition, so the window cannot open an OTA path the final state lacks.
+     */
+    const jj_mode_t modes[] = {JJ_MODE_OFF, JJ_MODE_MANUAL, JJ_MODE_AUTOMATIC};
+    const jj_fan_proof_t fans[] = {JJ_FAN_PROOF_UNAVAILABLE, JJ_FAN_PROOF_PENDING,
+                                   JJ_FAN_PROOF_PROVEN, JJ_FAN_PROOF_FAILED};
+    const jj_controller_state_t controllers[] = {
+        JJ_CONTROLLER_IDLE, JJ_CONTROLLER_VALID, JJ_CONTROLLER_INVALID};
+    int cases = 0;
+    for (int prev = 0; prev < 2; ++prev)
+    for (size_t m = 0; m < 3; ++m)
+    for (size_t f = 0; f < 4; ++f)
+    for (int cooldown = 0; cooldown < 2; ++cooldown)
+    for (int fault_tm = 0; fault_tm < 2; ++fault_tm)
+    for (int authority = 0; authority < 2; ++authority)
+    for (int overtemp = 0; overtemp < 2; ++overtemp)
+    for (size_t c = 0; c < 3; ++c) {
+        jj_interlock_t state;
+        jj_interlock_init(&state);
+        if (prev) {
+            const jj_inputs_t heating = nominal(JJ_MODE_MANUAL);
+            CHECK(cycle(&state, &heating).heater_authorized);
+        }
+        jj_inputs_t input = nominal(modes[m]);
+        input.fan_proof = fans[f];
+        input.cooldown_required = cooldown;
+        input.fault_requires_thermal_management = fault_tm;
+        input.manual_demand_authorized = authority;
+        input.overtemperature_detected = overtemp;
+        const jj_eligibility_t e = jj_interlock_evaluate(&state, &input);
+        const jj_outputs_t window = jj_interlock_snapshot(&state);
+        const jj_controller_report_t report = {
+            .eligibility_sequence = e.sequence,
+            .state = controllers[c],
+            .requested_duty_pct = 50.0f,
+        };
+        const jj_outputs_t final = jj_interlock_authorize(&state, &report);
+        CHECK(!window.heater_authorized);
+        CHECK(window.thermal_management_required == final.thermal_management_required);
+        if (ota_guard_allows(window)) CHECK(ota_guard_allows(final));
+        if (cooldown || fault_tm) CHECK(!ota_guard_allows(window));
+        ++cases;
+    }
+    CHECK(cases == 2 * 3 * 4 * 2 * 2 * 2 * 2 * 3);
+}
+
 int main(void)
 {
     test_boot_defaults_and_modes();
@@ -503,6 +609,8 @@ int main(void)
     test_authorization_requires_valid_controller();
     test_safety_never_rewrites_valid_request();
     test_stage_two_consumes_only_its_own_stage_one();
+    test_stage_one_window_keeps_ota_blocked();
+    test_stage_one_and_two_agree_on_thermal_management();
     puts("jj_interlock_host_test: PASS");
     return 0;
 }
