@@ -81,8 +81,46 @@ interlock code never acquires authority. Authority critical sections contain
 only bounded state checks/copies, the eight-entry cache scan, and short
 interlock operations—no logging, formatted I/O, allocation, or blocking calls.
 
+## PID-family control loop
+
+Normal heater control is PID-family closed-loop control; hysteretic bang-bang
+exists only as a future Phase 3 validation comparator. `dc_pid` (pinned
+dragon-core) provides controller mathematics only. `jj_control` owns setpoint
+resolution, `dc_pid` state/config lifecycle, integration decisions, and the raw
+request. `jj_interlock` remains the sole safety authority.
+
+Inside the one ordered control step, under the authority lock:
+
+1. `jj_interlock_evaluate()` (Stage 1) runs the single set of eligibility
+   predicates and returns a dominant block reason for diagnostics plus a
+   controller disposition aggregated over every applicable inhibit
+   (SUSPEND > HOLD > RUN). Diagnostic priority never decides disposition. Stage 1
+   immediately publishes a de-authorized snapshot and retains the evaluation
+   under a sequence token.
+2. `jj_controller_step()` consumes that result. SUSPEND: controller IDLE, state
+   reset. HOLD: step with integration frozen, state preserved. RUN: step with
+   integration. It never re-derives eligibility from `jj_inputs_t`.
+3. `jj_interlock_authorize()` (Stage 2) consumes the retained evaluation exactly
+   once, matched by token. It authorizes only RUN with a VALID controller and a
+   finite 0–100 % request; `allowed_duty_pct` is then the raw request. Any other
+   combination, a stale/replayed/unknown token, or a revocation or fault clear
+   between the stages fails cold.
+
+Controller state is IDLE (no step attempted; ordinary), VALID, or INVALID (step
+expected but rejected; reported as `controller_invalid`). `requested_duty_pct`
+is the unmodified `dc_pid` output and 0 unless VALID. No product code compares
+temperature to target; there is no target-crossing override.
+
+Only fan-proof-pending HOLDs. Every other inhibit, including NOT_COMMISSIONED
+and MANUAL_TARGET_INVALID, SUSPENDs; the classification is an exhaustive switch,
+so a new block reason does not compile until classified. Gains, sample interval,
+integral/output limits, target-change integral handling, and any product duty
+limiter are provisional pending Phase 3 plant evidence. The shipped
+configuration has zero gains and the production image is uncommissioned, so it
+never produces a heat request.
+
 ## OTA invariant
 
-The portal rejects OTA when heat is requested or active thermal management is
+The portal rejects OTA when heat is authorized or active thermal management is
 required. The same authoritative guard is rerun immediately before boot selection,
 then project identity is checked. Browser/API controls cannot override interlocks.
