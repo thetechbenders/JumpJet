@@ -32,6 +32,9 @@ jobs:
       - name: Test control authority state machine
         run: ./tests/run_authority_host_test.sh
 
+      - name: Test PID controller lifecycle and staged authorization
+        run: ./tests/run_control_host_test.sh
+
       - name: Test browser control client
         run: node --test tests/control-client.test.cjs
 
@@ -46,6 +49,9 @@ jobs:
 
       - name: Check control ordering, locking, and fault policy
         run: sh tests/check_control_safety_contract.sh
+
+      - name: Check controller/safety boundary
+        run: sh tests/check_controller_contract.sh
 
       - name: Enforce production actuation allowlist
         run: sh tests/check_actuation_allowlist.sh

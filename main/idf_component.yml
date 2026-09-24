@@ -3,6 +3,10 @@ dependencies:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_evlog
     version: 4e041d864763d468a50e9649807827dd83dd54bc
+  dc_pid:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_pid
+    version: 4e041d864763d468a50e9649807827dd83dd54bc
   dc_prusa:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_prusa

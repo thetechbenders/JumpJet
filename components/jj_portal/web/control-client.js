@@ -48,8 +48,38 @@
       control_no_authority: "Control inhibited: remote controller disconnected",
       state_refresh_required: "Control inhibited: authoritative state refresh required",
       automatic_authority_unavailable: "Heating inhibited: Automatic controller unavailable",
+      controller_invalid: "Heating inhibited: controller could not produce a valid request",
+      control_sequence_invalid: "Heating inhibited: control evaluation was out of sequence",
     };
     return messages[code] || "Heating inhibited: see advanced diagnostics";
+  }
+
+  const CONTROL_LOOP_LABELS = {
+    idle: {text: "Idle", className: ""},
+    valid: {text: "Running", className: ""},
+    invalid: {text: "Invalid: controller failure", className: "fault"},
+  };
+
+  function dutyText(value) {
+    return typeof value === "number" && Number.isFinite(value)
+      ? value.toFixed(1) + " %" : "—";
+  }
+
+  /*
+   * Primary heater presentation. Controller state is shown on its own so an
+   * INVALID controller stays visible whatever the dominant constraint is.
+   */
+  function heaterPresentation(heater) {
+    const h = heater || {};
+    const loop = Object.prototype.hasOwnProperty.call(CONTROL_LOOP_LABELS, h.control_loop)
+      ? CONTROL_LOOP_LABELS[h.control_loop]
+      : {text: "Unknown", className: "inhibit"};
+    return {
+      controllerText: loop.text,
+      controllerClass: loop.className,
+      requestedDuty: dutyText(h.requested_duty_percent),
+      allowedDuty: dutyText(h.allowed_duty_percent),
+    };
   }
 
   function mutationErrorMessage(code) {
@@ -199,6 +229,7 @@
     CONTROL_LOSS_ERRORS,
     controllerLabel,
     constraintMessage,
+    heaterPresentation,
     mutationErrorMessage,
   };
 });

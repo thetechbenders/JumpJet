@@ -15,13 +15,13 @@ if grep -q 'jj_authority_snapshot' "$app"; then
     echo "control task must not snapshot authority before cached inputs" >&2
     exit 1
 fi
-if grep -q 'jj_interlock_step' "$app" "$portal"; then
+if grep -Eq 'jj_interlock_(evaluate|authorize)|jj_controller_step' "$app" "$portal"; then
     echo "ordinary production interlock evaluation must remain control-task owned" >&2
     exit 1
 fi
 
 if rg -n '(ESP_LOG[A-Z]*|\b(printf|snprintf|vfprintf|malloc|calloc|realloc|free|xSemaphoreTake|vTaskDelay)[[:space:]]*\(|esp_http)' \
-    "$authority" >/dev/null; then
+    "$authority" "$root/components/jj_control/jj_control.c" >/dev/null; then
     echo "authority critical-section unit contains forbidden unbounded work" >&2
     exit 1
 fi

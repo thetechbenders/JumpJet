@@ -2,6 +2,7 @@
 #include "jj_interlock.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #ifdef ESP_PLATFORM
@@ -55,6 +56,110 @@ void jj_interlock_init(jj_interlock_t *state)
     STATE_UNLOCK();
 }
 
+/*
+ * Controller disposition for every block reason. Exhaustive with no default:
+ * adding a jj_block_reason_t without deciding its disposition fails the
+ * -Werror build (-Wswitch). Only an explicitly approved transient inhibit may
+ * HOLD; everything else SUSPENDs (idle + reset).
+ */
+jj_controller_disposition_t jj_block_reason_disposition(jj_block_reason_t reason)
+{
+    switch (reason) {
+    case JJ_BLOCK_NONE:
+        return JJ_DISPOSITION_RUN;
+    case JJ_BLOCK_FAN_PROOF_PENDING:
+        /* Approved Category A: transient authorization loss. */
+        return JJ_DISPOSITION_HOLD;
+    case JJ_BLOCK_OFF:
+    case JJ_BLOCK_NOT_COMMISSIONED:       /* approved: suspend + reset */
+    case JJ_BLOCK_FAULT_LATCHED:          /* suspended for the whole latch */
+    case JJ_BLOCK_INVALID_MODE:
+    case JJ_BLOCK_MANUAL_TARGET_INVALID:  /* approved: no valid objective */
+    case JJ_BLOCK_PRINTER_UNAVAILABLE:    /* AUTOMATIC: no Phase-4 setpoint */
+    case JJ_BLOCK_PRINTER_NOT_PRINTING:
+    case JJ_BLOCK_AUTO_POLICY_UNAVAILABLE:
+    case JJ_BLOCK_AUTO_AUTHORITY_UNAVAILABLE:
+    case JJ_BLOCK_CONTROL_NO_AUTHORITY:
+    case JJ_BLOCK_STATE_REFRESH_REQUIRED:
+    case JJ_BLOCK_CONTROLLER_INVALID:
+    case JJ_BLOCK_CONTROL_SEQUENCE_INVALID:
+    case JJ_BLOCK_REASON_COUNT:
+        return JJ_DISPOSITION_SUSPEND;
+    }
+    return JJ_DISPOSITION_SUSPEND; /* out-of-range value */
+}
+
+typedef struct {
+    jj_block_reason_t dominant;
+    uint32_t mask;
+    jj_controller_disposition_t disposition;
+} inhibit_accumulator_t;
+
+/*
+ * Record one applicable inhibit. The first recorded reason is the dominant
+ * diagnostic reason (unchanged PR #7 priority). Disposition is the minimum over
+ * every recorded reason, so it does not depend on check order. Returns true
+ * once SUSPEND is reached: nothing later can change the disposition.
+ */
+static bool record(inhibit_accumulator_t *acc, jj_block_reason_t reason)
+{
+    if (acc->dominant == JJ_BLOCK_NONE) acc->dominant = reason;
+    acc->mask |= UINT32_C(1) << (uint32_t)reason;
+    const jj_controller_disposition_t disposition =
+        jj_block_reason_disposition(reason);
+    if (disposition < acc->disposition) acc->disposition = disposition;
+    return acc->disposition == JJ_DISPOSITION_SUSPEND;
+}
+
+/*
+ * The single implementation of heat-eligibility predicates. Check order and
+ * fault-latching side effects are unchanged from PR #7; only the early
+ * returns now continue past non-SUSPEND inhibits.
+ */
+static void collect_inhibits(jj_interlock_t *state, const jj_inputs_t *input,
+                             inhibit_accumulator_t *acc)
+{
+    if (!input->commissioned && record(acc, JJ_BLOCK_NOT_COMMISSIONED)) return;
+    if (!sensors_ok(input)) state->fault_latched = JJ_FAULT_SENSOR;
+    if (input->overtemperature_detected)
+        state->fault_latched = JJ_FAULT_OVERTEMPERATURE;
+    if (state->fault_latched != JJ_FAULT_NONE &&
+        record(acc, JJ_BLOCK_FAULT_LATCHED)) return;
+    if (input->mode == JJ_MODE_OFF && record(acc, JJ_BLOCK_OFF)) return;
+    if (input->mode != JJ_MODE_MANUAL && input->mode != JJ_MODE_AUTOMATIC &&
+        record(acc, JJ_BLOCK_INVALID_MODE)) return;
+    if (input->fan_proof == JJ_FAN_PROOF_FAILED ||
+        (input->fan_proof != JJ_FAN_PROOF_UNAVAILABLE &&
+         input->fan_proof != JJ_FAN_PROOF_PENDING &&
+         input->fan_proof != JJ_FAN_PROOF_PROVEN)) {
+        state->fault_latched = JJ_FAULT_FAN;
+        if (record(acc, JJ_BLOCK_FAULT_LATCHED)) return;
+    }
+    if (input->fan_proof != JJ_FAN_PROOF_PROVEN &&
+        record(acc, JJ_BLOCK_FAN_PROOF_PENDING)) return;
+
+    if (input->mode == JJ_MODE_AUTOMATIC) {
+        if (input->active_authority != JJ_AUTHORITY_AUTOMATIC &&
+            record(acc, JJ_BLOCK_AUTO_AUTHORITY_UNAVAILABLE)) return;
+        if (!input->printer.online &&
+            record(acc, JJ_BLOCK_PRINTER_UNAVAILABLE)) return;
+        if (!input->printer.printing &&
+            record(acc, JJ_BLOCK_PRINTER_NOT_PRINTING)) return;
+        /* dc_prusa owns its 15 s freshness decision. No second timer lives here.
+         * Exact bed-target mapping is intentionally undefined, so AUTO is cold. */
+        (void)record(acc, JJ_BLOCK_AUTO_POLICY_UNAVAILABLE);
+        return;
+    }
+    if ((input->active_authority == JJ_AUTHORITY_REACQUIRING ||
+         input->control_inhibit == JJ_CONTROL_INHIBIT_STATE_REFRESH_REQUIRED) &&
+        record(acc, JJ_BLOCK_STATE_REFRESH_REQUIRED)) return;
+    if ((input->active_authority != JJ_AUTHORITY_REMOTE ||
+         !input->manual_demand_authorized) &&
+        record(acc, JJ_BLOCK_CONTROL_NO_AUTHORITY)) return;
+    if (!manual_target_valid(input->manual_target_c))
+        (void)record(acc, JJ_BLOCK_MANUAL_TARGET_INVALID);
+}
+
 static jj_outputs_t blocked(jj_interlock_t *state, jj_block_reason_t reason,
                             const jj_inputs_t *input)
 {
@@ -73,8 +178,7 @@ static jj_outputs_t blocked(jj_interlock_t *state, jj_block_reason_t reason,
     const bool thermal_management = input->cooldown_required ||
         input->fault_requires_thermal_management || state->fault_latched == JJ_FAULT_FAN ||
         reason == JJ_BLOCK_FAN_PROOF_PENDING;
-    jj_outputs_t output = {
-        .heater_requested = false,
+    return (jj_outputs_t){
         .fan_percent = thermal_management ? 100 : 0,
         .effective_target_c = 0.0f,
         .thermal_management_required = thermal_management,
@@ -84,75 +188,135 @@ static jj_outputs_t blocked(jj_interlock_t *state, jj_block_reason_t reason,
         .fault = state->fault_latched,
         .block_reason = reason,
     };
-    state->last_output = output;
-    return output;
 }
 
-static jj_outputs_t step_unlocked(jj_interlock_t *state, const jj_inputs_t *input)
+/* Strip any authorization from an output; optionally name the denial. */
+static jj_outputs_t deauthorized(jj_outputs_t output, jj_block_reason_t reason)
 {
-    if (!input->commissioned)
-        return blocked(state, JJ_BLOCK_NOT_COMMISSIONED, input);
-    if (!sensors_ok(input)) state->fault_latched = JJ_FAULT_SENSOR;
-    if (input->overtemperature_detected)
-        state->fault_latched = JJ_FAULT_OVERTEMPERATURE;
-    if (state->fault_latched != JJ_FAULT_NONE)
-        return blocked(state, JJ_BLOCK_FAULT_LATCHED, input);
-    if (input->mode == JJ_MODE_OFF)
-        return blocked(state, JJ_BLOCK_OFF, input);
-    if (input->mode != JJ_MODE_MANUAL && input->mode != JJ_MODE_AUTOMATIC)
-        return blocked(state, JJ_BLOCK_INVALID_MODE, input);
-    if (input->fan_proof == JJ_FAN_PROOF_FAILED ||
-        (input->fan_proof != JJ_FAN_PROOF_UNAVAILABLE &&
-         input->fan_proof != JJ_FAN_PROOF_PENDING &&
-         input->fan_proof != JJ_FAN_PROOF_PROVEN)) {
-        state->fault_latched = JJ_FAULT_FAN;
-        return blocked(state, JJ_BLOCK_FAULT_LATCHED, input);
-    }
-    if (input->fan_proof != JJ_FAN_PROOF_PROVEN)
-        return blocked(state, JJ_BLOCK_FAN_PROOF_PENDING, input);
-
-    const float target = input->manual_target_c;
-    if (input->mode == JJ_MODE_AUTOMATIC) {
-        if (input->active_authority != JJ_AUTHORITY_AUTOMATIC)
-            return blocked(state, JJ_BLOCK_AUTO_AUTHORITY_UNAVAILABLE, input);
-        if (!input->printer.online)
-            return blocked(state, JJ_BLOCK_PRINTER_UNAVAILABLE, input);
-        if (!input->printer.printing)
-            return blocked(state, JJ_BLOCK_PRINTER_NOT_PRINTING, input);
-        /* dc_prusa owns its 15 s freshness decision. No second timer lives here.
-         * Exact bed-target mapping is intentionally undefined, so AUTO is cold. */
-        return blocked(state, JJ_BLOCK_AUTO_POLICY_UNAVAILABLE, input);
-    }
-    if (input->active_authority == JJ_AUTHORITY_REACQUIRING ||
-        input->control_inhibit == JJ_CONTROL_INHIBIT_STATE_REFRESH_REQUIRED)
-        return blocked(state, JJ_BLOCK_STATE_REFRESH_REQUIRED, input);
-    if (input->active_authority != JJ_AUTHORITY_REMOTE ||
-        !input->manual_demand_authorized)
-        return blocked(state, JJ_BLOCK_CONTROL_NO_AUTHORITY, input);
-    if (!manual_target_valid(target))
-        return blocked(state, JJ_BLOCK_MANUAL_TARGET_INVALID, input);
-    jj_outputs_t output = {
-        .heater_requested = true,
-        .fan_percent = 100,
-        .effective_target_c = target,
-        .thermal_management_required = true,
-        .active_authority = JJ_AUTHORITY_REMOTE,
-        .control_inhibit = JJ_CONTROL_INHIBIT_NONE,
-        .thermal_state = JJ_THERMAL_HEATING,
-        .fault = JJ_FAULT_NONE,
-        .block_reason = JJ_BLOCK_NONE,
-    };
-    state->last_output = output;
+    output.heater_authorized = false;
+    output.allowed_duty_pct = 0.0f;
+    output.effective_target_c = 0.0f;
+    output.thermal_state = output.thermal_management_required
+        ? JJ_THERMAL_COOLDOWN : JJ_THERMAL_IDLE;
+    if (output.block_reason == JJ_BLOCK_NONE) output.block_reason = reason;
     return output;
 }
 
-jj_outputs_t jj_interlock_step(jj_interlock_t *state, const jj_inputs_t *input)
+static jj_eligibility_t evaluate_unlocked(jj_interlock_t *state,
+                                          const jj_inputs_t *input)
+{
+    inhibit_accumulator_t acc = {
+        .dominant = JJ_BLOCK_NONE,
+        .mask = 0,
+        .disposition = JJ_DISPOSITION_RUN,
+    };
+    collect_inhibits(state, input, &acc);
+
+    jj_outputs_t output;
+    if (acc.dominant == JJ_BLOCK_NONE) {
+        /* Eligible form; Stage 2 publishes it only if it authorizes. */
+        output = (jj_outputs_t){
+            .fan_percent = 100,
+            .effective_target_c = input->manual_target_c,
+            .thermal_management_required = true,
+            .active_authority = JJ_AUTHORITY_REMOTE,
+            .control_inhibit = JJ_CONTROL_INHIBIT_NONE,
+            .thermal_state = JJ_THERMAL_HEATING,
+            .fault = JJ_FAULT_NONE,
+            .block_reason = JJ_BLOCK_NONE,
+        };
+    } else {
+        output = blocked(state, acc.dominant, input);
+    }
+    output.controller_disposition = acc.disposition;
+
+    const jj_eligibility_t eligibility = {
+        .sequence = ++state->next_sequence,
+        .dominant_reason = acc.dominant,
+        .inhibit_mask = acc.mask,
+        .disposition = acc.disposition,
+    };
+    state->pending = eligibility;
+    state->pending_output = output;
+    state->pending_valid = true;
+    /* Never leave an earlier authorization visible while Stage 2 is pending. */
+    state->last_output = deauthorized(output, JJ_BLOCK_NONE);
+    return eligibility;
+}
+
+jj_eligibility_t jj_interlock_evaluate(jj_interlock_t *state, const jj_inputs_t *input)
 {
     if (!state || !input)
+        return (jj_eligibility_t){
+            .dominant_reason = JJ_BLOCK_FAULT_LATCHED,
+            .disposition = JJ_DISPOSITION_SUSPEND,
+        };
+    STATE_LOCK();
+    const jj_eligibility_t eligibility = evaluate_unlocked(state, input);
+    STATE_UNLOCK();
+    return eligibility;
+}
+
+static bool report_state_known(jj_controller_state_t value)
+{
+    switch (value) {
+    case JJ_CONTROLLER_IDLE:
+    case JJ_CONTROLLER_VALID:
+    case JJ_CONTROLLER_INVALID:
+        return true;
+    }
+    return false;
+}
+
+static jj_outputs_t authorize_unlocked(jj_interlock_t *state,
+                                       const jj_controller_report_t *report)
+{
+    if (!state->pending_valid || !report ||
+        report->eligibility_sequence != state->pending.sequence) {
+        /* No matching Stage 1 for this report: fail cold, consume nothing. */
+        state->pending_valid = false;
+        state->last_output = deauthorized(state->last_output,
+                                          JJ_BLOCK_CONTROL_SEQUENCE_INVALID);
+        return state->last_output;
+    }
+    /* Use the interlock-retained evaluation, exactly once. */
+    const jj_eligibility_t eligibility = state->pending;
+    jj_outputs_t output = state->pending_output;
+    state->pending_valid = false;
+
+    jj_controller_state_t controller = report_state_known(report->state)
+        ? report->state : JJ_CONTROLLER_INVALID;
+    const float request = report->requested_duty_pct;
+    if (controller == JJ_CONTROLLER_VALID &&
+        !(isfinite(request) && request >= 0.0f && request <= 100.0f))
+        controller = JJ_CONTROLLER_INVALID;
+    if (eligibility.disposition == JJ_DISPOSITION_SUSPEND &&
+        controller != JJ_CONTROLLER_IDLE)
+        controller = JJ_CONTROLLER_INVALID; /* stepped while suspended */
+    output.controller_state = controller;
+    /* Raw request is reported unmodified; safety only gates allowed duty. */
+    output.requested_duty_pct = controller == JJ_CONTROLLER_VALID ? request : 0.0f;
+
+    if (eligibility.disposition == JJ_DISPOSITION_RUN &&
+        controller == JJ_CONTROLLER_VALID) {
+        output.heater_authorized = true;
+        /* No non-safety product limiter exists yet (ownership unresolved). */
+        output.allowed_duty_pct = output.requested_duty_pct;
+    } else {
+        output = deauthorized(output, JJ_BLOCK_CONTROLLER_INVALID);
+    }
+    state->last_output = output;
+    return output;
+}
+
+jj_outputs_t jj_interlock_authorize(jj_interlock_t *state,
+                                    const jj_controller_report_t *report)
+{
+    if (!state)
         return (jj_outputs_t){.fault = JJ_FAULT_SENSOR,
                               .block_reason = JJ_BLOCK_FAULT_LATCHED};
     STATE_LOCK();
-    jj_outputs_t output = step_unlocked(state, input);
+    const jj_outputs_t output = authorize_unlocked(state, report);
     STATE_UNLOCK();
     return output;
 }
@@ -194,6 +358,7 @@ static bool clear_fault_unlocked(jj_interlock_t *state, const jj_inputs_t *input
         return false;
     }
     state->fault_latched = JJ_FAULT_NONE;
+    state->pending_valid = false;
     state->last_output = (jj_outputs_t){.block_reason = JJ_BLOCK_OFF};
     return true;
 }
@@ -215,7 +380,10 @@ void jj_interlock_remove_remote_authorization(
 {
     if (!state) return;
     STATE_LOCK();
-    state->last_output.heater_requested = false;
+    /* Revocation also voids any Stage-1 result not yet authorized. */
+    state->pending_valid = false;
+    state->last_output.heater_authorized = false;
+    state->last_output.allowed_duty_pct = 0.0f;
     state->last_output.effective_target_c = 0.0f;
     state->last_output.active_authority = authority;
     state->last_output.control_inhibit = inhibit;
@@ -295,6 +463,8 @@ const char *jj_block_reason_str(jj_block_reason_t reason)
     case JJ_BLOCK_CONTROL_NO_AUTHORITY: return "control_no_authority";
     case JJ_BLOCK_STATE_REFRESH_REQUIRED: return "state_refresh_required";
     case JJ_BLOCK_AUTO_AUTHORITY_UNAVAILABLE: return "automatic_authority_unavailable";
+    case JJ_BLOCK_CONTROLLER_INVALID: return "controller_invalid";
+    case JJ_BLOCK_CONTROL_SEQUENCE_INVALID: return "control_sequence_invalid";
     default: return "unknown";
     }
 }
@@ -327,6 +497,26 @@ const char *jj_thermal_state_str(jj_thermal_state_t state)
     case JJ_THERMAL_IDLE: return "idle";
     case JJ_THERMAL_HEATING: return "heating";
     case JJ_THERMAL_COOLDOWN: return "cooldown";
+    default: return "unknown";
+    }
+}
+
+const char *jj_controller_state_str(jj_controller_state_t state)
+{
+    switch (state) {
+    case JJ_CONTROLLER_IDLE: return "idle";
+    case JJ_CONTROLLER_VALID: return "valid";
+    case JJ_CONTROLLER_INVALID: return "invalid";
+    default: return "unknown";
+    }
+}
+
+const char *jj_controller_disposition_str(jj_controller_disposition_t disposition)
+{
+    switch (disposition) {
+    case JJ_DISPOSITION_SUSPEND: return "suspend";
+    case JJ_DISPOSITION_HOLD: return "hold";
+    case JJ_DISPOSITION_RUN: return "run";
     default: return "unknown";
     }
 }

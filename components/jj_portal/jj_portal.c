@@ -239,7 +239,13 @@ static cJSON *control_state_json(
     const bool raw_request = authority->mode == JJ_MODE_MANUAL &&
         authority->manual_demand_authorized;
     cJSON_AddBoolToObject(heater, "requested", raw_request);
-    cJSON_AddBoolToObject(heater, "allowed", output->heater_requested);
+    cJSON_AddStringToObject(heater, "control_loop",
+                           jj_controller_state_str(output->controller_state));
+    cJSON_AddNumberToObject(heater, "requested_duty_percent",
+                           output->requested_duty_pct);
+    cJSON_AddBoolToObject(heater, "allowed", output->heater_authorized);
+    cJSON_AddNumberToObject(heater, "allowed_duty_percent",
+                           output->allowed_duty_pct);
     cJSON_AddBoolToObject(heater, "delivered", false);
     cJSON_AddNumberToObject(heater, "delivered_percent", 0);
     cJSON_AddBoolToObject(heater, "available", false);
@@ -586,7 +592,7 @@ static bool authorize(httpd_req_t *req, void *ctx)
 static esp_err_t thermal_state_guard(char *message, size_t message_size)
 {
     const jj_outputs_t output = jj_interlock_snapshot(s_interlock);
-    if (!output.heater_requested && !output.thermal_management_required)
+    if (!output.heater_authorized && !output.thermal_management_required)
         return ESP_OK;
     snprintf(message, message_size,
              "OTA is unavailable while heating or active thermal management is required.");
