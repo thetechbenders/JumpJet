@@ -1,6 +1,6 @@
 # Phase 1 hardware source-of-truth register
 
-Last updated: 2026-09-08
+Last updated: 2026-09-27
 
 This is the living engineering register for JumpJet Rev A Phase-1 hardware
 implementation. It records what is known, how it is known, what remains
@@ -228,6 +228,17 @@ identify a valid production cutoff temperature or mounting location.
 | Ground and return strategy | DESIGN DECISION | Prefer a continuous ground plane with a controlled heater/fan/buck high-current return corridor. Thermistor/ADC returns must not share narrow or common-impedance copper with heater current. Do not create arbitrary split grounds that damage ESP32 RF return integrity. | Phase-1 signal-integrity and current-return strategy | High for topology; implementation provisional | Review actual return geometry, buck loops, ADC noise, RF keepout, and current-path coupling after placement/routing. | PCB layout + Fabrication |
 | High-current placement priority | DESIGN DECISION | Place and review `+24V_PROT -> F2 -> TF1 -> TS1 -> J2 -> heater -> Q1 -> GND` before convenience circuitry. Keep Q1, J2, F2, and the heater-current path compact without weakening conductor geometry for appearance. | Rev A.4.1 topology and Phase-1 implementation priority | High | Complete placement, current-loop, service-clearance, and thermal review. | PCB layout + Fabrication |
 | PCB validation | TBD / BLOCKED | Current-density bottlenecks, Q1 thermal spreading, fuse-holder and J2 pad heating, high-current return geometry, ADC noise, antenna keepout, DRC, fabricated-board temperature rise, and full-path voltage drop are unvalidated. | No Rev A PCB exists yet | High confidence that validation is pending | Create the board, review design evidence, fabricate only after blockers close, then thermally/electrically test production-intent hardware. | PCB layout + BOM freeze + Fabrication |
+
+## 11. External reference hardware
+
+External products characterized for architecture review only. Entries here do
+not select JumpJet components, are not BOM sources, and do not establish JumpJet
+safety or compliance evidence. Component detail lives in the linked records, not
+in the JumpJet production tables above.
+
+| Item | Status | Current value / decision | Evidence / source | Confidence | Remaining validation | Blocks |
+|---|---|---|---|---|---|---|
+| BIGTREETECH Panda PWR Rev 1 teardown | CONFIRMED FACT | External/reference evidence only. Direct teardown confirms `ESP8684-MINI-1-H4`, `HLK-20M05`, `SRD-05VDC-SL-B`, `HLW8112`, `ZMPT107-1`, and a `T2A 250V` fuse marking. Sensing-path, fuse-branch, relay-routing, isolation-boundary, and 5 V / 3.3 V rail topology remain partly unmapped. Informs architecture review only; selects no JumpJet component. | [Panda PWR characterization](hardware/panda-pwr-characterization.md); destructive teardown photographs, 2026-09-27 | High for listed markings; low for circuit topology | Unpowered continuity mapping, isolation/creepage mapping, and verification of the FCC `2BAS6-PANDAPWR` model-difference wording against the primary exhibit, per the characterization record. | None |
 
 ## Current fabrication blockers
 
