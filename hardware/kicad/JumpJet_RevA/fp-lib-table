@@ -1,0 +1,3 @@
+(fp_lib_table
+  (lib (name "JumpJet")(type "KiCad")(uri "${KIPRJMOD}/JumpJet.pretty")(options "")(descr "JumpJet project footprints"))
+)

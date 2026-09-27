@@ -4,3 +4,16 @@ sdkconfig
 sdkconfig.old
 dependencies.lock
 main/dev_config.h
+
+# KiCad transient/editor state and generated fabrication output. Keep native
+# project, schematic, PCB, symbol, footprint, and library-table sources tracked.
+*.lck
+*-backups/
+*.bak
+*.tmp
+_autosave-*
+*.gbr
+*.gbrjob
+*.drl
+*.pos
+*.rpt

@@ -19,11 +19,19 @@ no phase passes its gate without the listed evidence.
 
 ## Phase 1 — freeze the hardware contract
 
-**Status:** next
+**Status:** active
 
-- review the current schematic, PCB layout, BOM, enclosure, and airflow path
-- confirm the exact ESP32-S3 module, flash size, GPIO map, and boot-strap constraints
-- identify heater, MOSFET, fans, thermistors, connectors, fuse, thermal cutoff, and switch
+- use Rev A.4.1 as the current authoritative schematic baseline
+- freeze the hardware contract and create/review the first Rev A PCB during Phase 1
+- review the BOM, enclosure, mechanical interfaces, and airflow path
+- confirm the exact ESP32-S3 Super Mini revision, flash size, GPIO map, and boot-strap constraints
+- implement a physically accessible, visibly labeled disconnect between
+  board-derived MCU 5 V and the Super Mini's directly coupled 5 V/USB-VBUS node;
+  seamless simultaneous board/USB power is out of scope for Rev A
+- identify heater, MOSFET, characterized four-wire fan channel, thermistors,
+  connectors, fuses, thermal cutoff, and switch
+- characterize the prototype fan before freezing interface-derived firmware
+  values or RPM/stall/proof thresholds
 - calculate steady and worst-case current, connector loading, copper temperature rise,
   MOSFET dissipation, gate drive, voltage drop, ADC range, and protection margins
 - create a system hazard analysis covering single faults and foreseeable misuse
@@ -39,7 +47,7 @@ protection question. Firmware constants may not be finalized before this gate.
 - implement board identity and force all heater control pins to their safe level at reset
 - implement calibrated ADC/thermistor conversion with open, short, rail, NaN, and
   implausible-reading classification
-- implement both fan outputs and any available tachometer or airflow feedback
+- implement the reviewed fan channel and tach-based fan proof
 - define the bounded fan-start/proof sequence and explicit proof-failure criteria from release-intent hardware evidence
 - implement the physical switch and define its electrical and software semantics
 - persist settings with bounds, schema versioning, corrupt-value fallback, and factory reset

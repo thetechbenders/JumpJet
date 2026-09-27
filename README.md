@@ -51,9 +51,18 @@ about 130 °C at the heater/PTC region, and about 74–75 °C at the chassis. De
 sizing remains the rated 24 V / 200 W / 8.33 A case.
 
 That test did **not** validate the complete Jump Jet Q1/F2/PCB/connector/wiring
-path or installed operation. The authoritative `.kicad_pcb` is still missing.
-GPIO, ADC, thermistor, protection, and cooldown thresholds therefore remain TBD.
-The Sanyo Denki 9GA0424P3J001 is only a prototype fan candidate, not BOM-final.
+path or installed operation. Rev A.4.1 is the authoritative schematic baseline,
+and its [KiCad project source](hardware/kicad/JumpJet_RevA/README.md) is checked
+into this repository. The first Rev A PCB is Phase-1 work in progress; no
+fabrication-approved PCB or outputs exist. Checked-in source does not authorize
+heater or fan actuation. Detailed status and blockers are tracked in the
+[Phase 1 hardware register](docs/PHASE1_HARDWARE_REGISTER.md). GPIO, ADC,
+thermistor, protection, and cooldown thresholds therefore remain TBD.
+
+The replacement-fan direction is continuous fused 24 V and ground with separate
+open-drain PWM and tach feedback. The Sanyo Denki 9GA0424P3J001 remains a
+prototype candidate, not BOM-final; published facts and pending measurements are
+tracked in its [characterization record](docs/hardware/9ga0424p3j001-characterization.md).
 
 ## Safety boundary
 

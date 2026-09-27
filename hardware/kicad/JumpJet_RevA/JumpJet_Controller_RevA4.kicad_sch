@@ -1,0 +1,75 @@
+(kicad_sch (version 20211014) (generator kiutils)
+
+  (uuid 3874605f-c189-41da-bb58-9cc7ea032c5a)
+
+  (paper "A4")
+
+  (title_block
+    (title "JumpJet Controller Rev A.4.1 — Functional Index")
+    (rev "A.4.1 - LAYOUT CLEANUP")
+    (company "JumpJet")
+    (comment 1 "24 V PTC chamber-heater controller")
+    (comment 2 "Not fabrication-approved; TBD values require bench verification")
+  )
+  (lib_symbols)
+
+  (sheet (at 35 35) (size 105 45)
+    (stroke (width 0.0))
+    (fill (color 0 0 0 0))
+    (uuid 7daa19f2-c821-405d-9b33-9c66dc62ede9)
+    (property "Sheet name" "Power, protection, heater, blower, and auxiliary outputs" (at 35 32.5 0))
+    (property "Sheet file" "JumpJet_Power_Outputs.kicad_sch" (at 35 83 0))
+    (instances
+      (project "JumpJet_Controller_RevA4"
+        (path "/7daa19f2-c821-405d-9b33-9c66dc62ede9" (page "2"))
+      )
+    )
+  )
+
+  (sheet (at 165 35) (size 105 45)
+    (stroke (width 0.0))
+    (fill (color 0 0 0 0))
+    (uuid 51e23f80-8aba-4434-ad6f-efcedfd6b106)
+    (property "Sheet name" "ESP32-S3 controller, logic power, and service header" (at 165 32.5 0))
+    (property "Sheet file" "JumpJet_Controller.kicad_sch" (at 165 83 0))
+    (instances
+      (project "JumpJet_Controller_RevA4"
+        (path "/51e23f80-8aba-4434-ad6f-efcedfd6b106" (page "3"))
+      )
+    )
+  )
+
+  (sheet (at 35 105) (size 105 45)
+    (stroke (width 0.0))
+    (fill (color 0 0 0 0))
+    (uuid 7c4d4b33-dd60-4c75-b093-7eaa23607d3f)
+    (property "Sheet name" "Thermistor front ends" (at 35 102.5 0))
+    (property "Sheet file" "JumpJet_Temperature_Sensing.kicad_sch" (at 35 153 0))
+    (instances
+      (project "JumpJet_Controller_RevA4"
+        (path "/7c4d4b33-dd60-4c75-b093-7eaa23607d3f" (page "4"))
+      )
+    )
+  )
+
+  (sheet (at 165 105) (size 105 45)
+    (stroke (width 0.0))
+    (fill (color 0 0 0 0))
+    (uuid 1f951ade-7604-48c5-b3a7-4470eab2f41a)
+    (property "Sheet name" "Qwiic, user expansion, and test points" (at 165 102.5 0))
+    (property "Sheet file" "JumpJet_Expansion_Test.kicad_sch" (at 165 153 0))
+    (instances
+      (project "JumpJet_Controller_RevA4"
+        (path "/1f951ade-7604-48c5-b3a7-4470eab2f41a" (page "5"))
+      )
+    )
+  )
+
+  (sheet_instances
+    (path "/" (page "1"))
+    (path "/7daa19f2-c821-405d-9b33-9c66dc62ede9" (page "2"))
+    (path "/51e23f80-8aba-4434-ad6f-efcedfd6b106" (page "3"))
+    (path "/7c4d4b33-dd60-4c75-b093-7eaa23607d3f" (page "4"))
+    (path "/1f951ade-7604-48c5-b3a7-4470eab2f41a" (page "5"))
+  )
+)

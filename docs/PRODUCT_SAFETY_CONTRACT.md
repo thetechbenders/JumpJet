@@ -41,6 +41,12 @@ AUTOMATIC production heating is unavailable even when `PRINTING` is fresh.
   and evidence of sane commanded-OFF behavior before heat may be enabled again.
 - Cooldown and fault fan policy is product-owned and may operate in OFF.
 - Browser and API authorization are management controls, never the safety boundary.
+- The actual Super Mini directly couples USB VBUS to its exposed 5 V pin. Rev A
+  therefore requires a physical disconnect between board-derived MCU 5 V and
+  the module node, opened before powered USB service. USB must never power
+  `+5V_SYS_GATE`, the heater gate driver, the MOSFET actuation path, or any other
+  safety-critical actuator domain. Removal of 24 V must collapse gate power even
+  if USB keeps the MCU alive.
 
 Reset-cause persistence, stuck-on proof, physical sensors, and physical fan proof
 are not implemented in this heater-incapable foundation. They are mandatory gates
@@ -93,7 +99,17 @@ Those temperatures are observations, not firmware thresholds.
 ## Hardware-dependent TBDs
 
 The full Q1/F2/PCB copper/connectors/wiring path is not validated, and the
-authoritative `.kicad_pcb` is missing. Final GPIO, ADC, thermistor conversion,
+Rev A.4.1 schematic is the current hardware authority. The Rev A PCB layout does
+not yet exist and must be implemented and validated during Phase 1. Hardware
+actuation remains blocked until the resulting PCB/current path and the other
+safety-critical hardware are validated. Final GPIO, ADC, thermistor conversion,
 protection thresholds, cooldown criteria, and recovery thresholds must not be
 invented. Sanyo Denki 9GA0424P3J001 is a prototype fan candidate only and is not
 BOM-final.
+
+The intended replacement-fan architecture is continuous fused 24 V plus ground,
+separate open-drain PWM, and tach feedback. The Rev A.4.1 low-side switched fan-
+power block is obsolete for production. No production pulses/revolution,
+minimum duty, RPM/stall threshold, or proof timeout exists before
+characterization; a candidate-specific 25 kHz test point does not freeze final
+fan policy. Physical fan proof remains mandatory before heater actuation.
